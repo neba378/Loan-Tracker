@@ -10,6 +10,7 @@ import (
 func GenerateJWT(id string, username string, role string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
+		ID:       id,
 		Username: username,
 		Role:     role,
 		StandardClaims: jwt.StandardClaims{
@@ -46,6 +47,14 @@ func GetUsernameFromToken(token *jwt.Token) (string, error) {
 		return "", jwt.ErrInvalidKey
 	}
 	return claims.Username, nil
+}
+
+func GetIDFromToken(token *jwt.Token) (string, error) {
+	claims, ok := token.Claims.(*Claims)
+	if !ok {
+		return "", jwt.ErrInvalidKey
+	}
+	return claims.ID, nil
 }
 
 func GetRoleFromToken(token *jwt.Token) (string, error) {

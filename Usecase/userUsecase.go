@@ -6,13 +6,33 @@ import (
 	"Loan_Tracker/infrastructure"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+var jwtKey []byte
+
+// Initialize the jwtKey from the .env file
+func init() {
+	// Load the .env file
+	err := godotenv.Load(".env") // Adjust the path if necessary
+	if err != nil {
+		panic("Error loading .env file")
+	}
+
+	// Get the JWT secret key from the environment variable
+	jwtKey = []byte(os.Getenv("JWT_SECRET_KEY"))
+	if len(jwtKey) == 0 {
+		panic("JWT_SECRET_KEY not set in .env file")
+	}
+}
 
 type UserUsecase interface {
 	Register(input Domain.RegisterInput) (*Domain.User, error)
@@ -30,13 +50,15 @@ type UserUsecase interface {
 
 type userUsecase struct {
 	userRepo        repository.UserRepository
+	logRepo         repository.LogRepository
 	emailService    *infrastructure.EmailService
 	passwordService *infrastructure.PasswordService
 }
 
-func NewUserUsecase(userRepo repository.UserRepository, emailService *infrastructure.EmailService) UserUsecase {
+func NewUserUsecase(userRepo repository.UserRepository, logRepo repository.LogRepository, emailService *infrastructure.EmailService) UserUsecase {
 	return &userUsecase{
 		userRepo:        userRepo,
+		logRepo:         logRepo,
 		emailService:    emailService,
 		passwordService: infrastructure.NewPasswordService(),
 	}
@@ -113,7 +135,7 @@ func (u *userUsecase) Register(input Domain.RegisterInput) (*Domain.User, error)
 	}
 
 	// Generate a verification token
-	newToken, err := infrastructure.GenerateResetToken(user.Username, user.Role, []byte("BlogManagerSecretKey"))
+	newToken, err := infrastructure.GenerateResetToken(user.Username, user.Role, jwtKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate verification token: %v", err)
 	}
@@ -161,21 +183,45 @@ func (u *userUsecase) DeleteUser(id string) error {
 }
 
 func (u *userUsecase) Login(c *gin.Context, LoginUser *Domain.LoginInput) (string, string, error) {
-
 	user, err := u.userRepo.FindByUsername(LoginUser.Username)
 	if err != nil {
 		// If not found by username, try to find by email
 		user, err = u.userRepo.FindByEmail(LoginUser.Username)
 		if err != nil {
+			// Log failed login attempt
+			log := &Domain.LogEntry{
+				ID:        primitive.NewObjectID(),
+				LogType:   "login_attempt",
+				Timestamp: time.Now(),
+				UserID:    "",
+				Message:   fmt.Sprintf("Failed login attempt for username/email: %s", LoginUser.Username),
+			}
+			err = u.logRepo.Save(log)
+			if err != nil {
+				return "", "", fmt.Errorf("failed to log failed login attempt: %v", err)
+			}
 			return "", "", errors.New("invalid username or email or password")
 		}
 	}
+
 	if err != nil {
 		return "", "", errors.New("invalid username or password")
 	}
 
 	err = u.passwordService.ComparePasswords(user.Password, LoginUser.Password)
 	if err != nil {
+		// Log failed login attempt
+		log := &Domain.LogEntry{
+			ID:        primitive.NewObjectID(),
+			LogType:   "login_attempt",
+			Timestamp: time.Now(),
+			UserID:    user.ID.Hex(),
+			Message:   fmt.Sprintf("Failed login attempt for user %s", user.Username),
+		}
+		err = u.logRepo.Save(log)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to log failed login attempt: %v", err)
+		}
 		return "", "", errors.New("invalid username or password")
 	}
 
@@ -198,6 +244,19 @@ func (u *userUsecase) Login(c *gin.Context, LoginUser *Domain.LoginInput) (strin
 
 	if !user.IsActive {
 		return "", "", fmt.Errorf("user not verified")
+	}
+
+	// Log successful login
+	log := &Domain.LogEntry{
+		ID:        primitive.NewObjectID(),
+		LogType:   "login_attempt",
+		Timestamp: time.Now(),
+		UserID:    user.ID.Hex(),
+		Message:   fmt.Sprintf("Successful login for user %s", user.Username),
+	}
+	err = u.logRepo.Save(log)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to log successful login: %v", err)
 	}
 
 	return accessToken, refreshToken, nil
@@ -253,12 +312,24 @@ Best regards,
 		return "", fmt.Errorf("failed to send reset email: %v", err)
 	}
 
+	// Log password reset request
+	log := &Domain.LogEntry{
+		ID:        primitive.NewObjectID(),
+		LogType:   "password_reset_request",
+		Timestamp: time.Now(),
+		UserID:    user.ID.Hex(),
+		Message:   fmt.Sprintf("Password reset requested for user %s", user.Username),
+	}
+	err = u.logRepo.Save(log)
+	if err != nil {
+		return "", fmt.Errorf("failed to log password reset request: %v", err)
+	}
 	return accessToken, nil
 }
 
 func (u *userUsecase) Reset(c *gin.Context, token string) (string, error) {
 
-	claims, err := infrastructure.ParseResetToken(token, []byte("BlogManagerSecretKey"))
+	claims, err := infrastructure.ParseResetToken(token, jwtKey)
 	if err != nil {
 		fmt.Println("Error parsing token:", err)
 		return "", err
@@ -292,11 +363,24 @@ func (u *userUsecase) Reset(c *gin.Context, token string) (string, error) {
 		return "", fmt.Errorf("failed to generate access token: %v", err)
 	}
 
+	// Log password reset completion
+	log := &Domain.LogEntry{
+		ID:        primitive.NewObjectID(),
+		LogType:   "password_reset_completion",
+		Timestamp: time.Now(),
+		UserID:    user.ID.Hex(),
+		Message:   fmt.Sprintf("Password reset completed for user %s", user.Username),
+	}
+	err = u.logRepo.Save(log)
+	if err != nil {
+		return "", fmt.Errorf("failed to log password reset completion: %v", err)
+	}
+
 	return access_token, nil
 }
 
 func (u *userUsecase) Verify(token string) error {
-	claims, err := infrastructure.ParseResetToken(token, []byte("BlogManagerSecretKey"))
+	claims, err := infrastructure.ParseResetToken(token, jwtKey)
 	if err != nil {
 		fmt.Println("Error parsing token:", err)
 	}
@@ -319,6 +403,7 @@ func isValidEmail(email string) bool {
 }
 
 func (u *userUsecase) FindUser(id string) (Domain.User, error) {
+
 	user, err := u.userRepo.ShowUser(id)
 	if err != nil {
 		return Domain.User{}, err

@@ -75,7 +75,7 @@ func AuthMiddleware(tokenCollection *mongo.Collection) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
+		c.Set("userID", claims.ID)
 		c.Set("username", claims.Username)
 		c.Set("role", claims.Role)
 		c.Next()

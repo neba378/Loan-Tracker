@@ -144,3 +144,6 @@ The server will start on port `8080`. You can change the port by modifying the `
 
 For any questions or feedback, please reach out to [nebiyu](mailto:nebiyumusbah378@gmail.com).
 
+## Postman API documentation
+[Postman Documentation](https://documenter.getpostman.com/view/29755863/2sAXjGduPM)
+

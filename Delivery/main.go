@@ -16,11 +16,13 @@ import (
 )
 
 func main() {
-
+	// Load environment variables
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+
+	// Setup MongoDB connection
 	mongoURI := os.Getenv("MONGO_URL")
 	clientOptions := options.Client().ApplyURI(mongoURI)
 	client, err := mongo.Connect(context.TODO(), clientOptions)
@@ -29,14 +31,33 @@ func main() {
 	}
 	defer client.Disconnect(context.TODO())
 
-	userDatabase := client.Database("Loan_Tracker")
+	// Get database and collections
+	database := client.Database("Loan_Tracker")
+	userCollection := database.Collection("User")
+	tokenCollection := database.Collection("Token")
+	loanCollection := database.Collection("Loan")
+	logCollection := database.Collection("Log")
 
-	userCollection := userDatabase.Collection("User")
-	tokenCollection := userDatabase.Collection("Token")
+	// Setup repositories
 	userRepository := repository.NewUserRepository(userCollection, tokenCollection)
+	loanRepository := repository.NewLoanRepository(loanCollection) // New loan repository
+	logRepository := repository.NewLogRepository(logCollection)
+	// Setup services
 	emailService := infrastructure.NewEmailService()
-	userUsecase := Usecases.NewUserUsecase(userRepository, emailService)
+
+	// Setup use cases
+	userUsecase := Usecases.NewUserUsecase(userRepository, logRepository, emailService)
+	loanUsecase := Usecases.NewLoanUsecase(loanRepository, logRepository) // New loan use case
+	logUsecase := Usecases.NewLogUsecase(logRepository)
+
+	// Setup controllers
 	userController := controller.NewUserController(userUsecase)
-	router := router.SetupRouter(userController, tokenCollection)
+	loanController := controller.NewLoanController(loanUsecase) // New loan controller
+	logController := controller.NewLogController(logUsecase)
+
+	// Setup router
+	router := router.SetupRouter(userController, loanController, logController, tokenCollection)
+
+	// Start the server
 	log.Fatal(router.Run(":8080"))
 }

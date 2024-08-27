@@ -153,6 +153,10 @@ func (uc *UserController) Verify(c *gin.Context) {
 func (uc *UserController) FindUser(c *gin.Context) {
 	id := c.Param("id") // Get user ID from the URL parameters
 
+	if id != c.GetString(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "You can only see your own profile"})
+		return
+	}
 	user, err := uc.UserUsecase.FindUser(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
